@@ -1,0 +1,70 @@
+pipeline {
+  agent { label 'raju' }  // or 'any' if you don't need a specific node
+
+  environment {
+    IMAGE_NAME = 'react-webapp'
+    IMAGE_TAG  = "${env.BUILD_NUMBER}"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        // clone your GitHub repo
+        git url: 'https://github.com/vrajurkar95/React-webapp.git', branch: 'main'
+      }
+    }
+
+    stage('Install & Build') {
+      steps {
+        // make sure Node is on the PATH (configure a 'NodeJS 18' tool in Jenkins → Global Tool Configuration)
+        // or skip 'tools' and rely on your agent having node/npm installed.
+        sh 'npm ci'
+        sh 'npm run build'
+      }
+    }
+
+    stage('Docker Build') {
+      steps {
+        // build the Docker image
+        sh """
+          docker build \
+            -t ${IMAGE_NAME}:${IMAGE_TAG} \
+            .
+        """
+      }
+    }
+
+    stage('Docker Run (smoke test)') {
+      steps {
+        // run the container for a quick smoke‑test, then kill it
+        sh """
+          CONTAINER_ID=\$(docker run -d --rm -p 3000:3000 ${IMAGE_NAME}:${IMAGE_TAG})
+          sleep 5
+          curl -f http://localhost:3000 || (docker logs \$CONTAINER_ID && exit 1)
+          docker stop \$CONTAINER_ID
+        """
+      }
+    }
+
+    // Optional: push to a registry
+    // stage('Publish') {
+    //   when {
+    //     expression { return env.DOCKER_REGISTRY }
+    //   }
+      steps {
+        sh """
+          docker tag ${IMAGE_NAME}:${IMAGE_TAG} \\
+            ${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+          docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+        """
+      }
+    }
+  }
+
+  post {
+    always {
+      // clean up any dangling images to save disk
+      sh 'docker image prune -f'
+    }
+  }
+}
